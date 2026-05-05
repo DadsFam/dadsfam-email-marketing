@@ -32,6 +32,9 @@
 3. Add or import **Subscribers**
 4. Click **New Campaign** → write, preview, test, then send
 
+### Support
+Need help? Email us at: **socials@dadsfam.co.za**
+
 ---
 
 ### Changelog
