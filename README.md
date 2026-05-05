@@ -32,6 +32,25 @@
 3. Add or import **Subscribers**
 4. Click **New Campaign** → write, preview, test, then send
 
+### ❤️ A Note from the Developer
+This plugin is completely free.
+
+I built it for fun — a Dad from South Africa just trying to make ends meet. Yes, we know AI is advanced and there are bigger/better plugins out there. I do this because I love it.
+
+If you really like what I do and it helps you, please consider purchasing a **Pro License Key**. It’s purely a donation/support that helps put food on the table and lets me keep building awesome free plugins for the WordPress community.
+
+Thank you for understanding ❤️  
+Love from South Africa 🇿🇦
+
+### 🌐 Connect With Us
+- **Website**: [www.dadsfam.co.za](https://www.dadsfam.co.za)
+- **Threads**: [@dadsfamshop](https://www.threads.com/@dadsfamshop)
+- **WhatsApp Community**: [Join here](https://chat.whatsapp.com/IQUhr0zoiO42Y9pXgLMQQz)
+- **Instagram**: [@dadsfamshop](https://www.instagram.com/dadsfamshop/)
+- **X / Twitter**: [@DADSFAM](https://x.com/DADSFAM)
+- **WordPress Plugins**: [Browse all plugins](https://www.dadsfam.co.za/plugins-dadsfam-co-za/)
+- **GitHub**: [DadsFam](https://github.com/DadsFam)
+
 ### Support
 Need help? Email us at: **socials@dadsfam.co.za**
 
