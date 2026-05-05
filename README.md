@@ -51,8 +51,14 @@ Love from South Africa 🇿🇦
 - **WordPress Plugins**: [Browse all plugins](https://www.dadsfam.co.za/plugins-dadsfam-co-za/)
 - **GitHub**: [DadsFam](https://github.com/DadsFam)
 
-### Support
-Need help? Email us at: **socials@dadsfam.co.za**
+### 📢 WordPress.org Submission
+We are actively submitting all our plugins to the official [WordPress.org Plugin Directory](https://wordpress.org/plugins/).  
+Sometimes approvals can be delayed due to the high volume of submissions.  
+
+If you can’t find it there yet, you can always download the latest version directly from our **[website](https://www.dadsfam.co.za)** or this GitHub repository.
+
+Please be patient with us ❤️  
+Contact us anytime if you need help: **socials@dadsfam.co.za**
 
 ---
 
