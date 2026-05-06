@@ -24,6 +24,14 @@
 
 ![Dashboard](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/email%20marketing%20dashboard%201.png)
 
+![Settings Menu](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/Settings%20Menu%201.png)
+
+![Campaign Settings](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/Campaign%20Settings%201.png)
+
+![Subscribers Dashboard](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/Subscribers%20Dashboard%201.png)
+
+---
+
 ### Installation
 1. Download or clone this repository
 2. Upload the folder to `/wp-content/plugins/dadsfam-email-marketing/`
