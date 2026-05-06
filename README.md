@@ -20,6 +20,10 @@
 - Beautiful unsubscribe page
 - Modern admin interface + pagination
 
+### Screenshots
+
+![Dashboard](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/email%20marketing%20dashboard%201.png)
+
 ### Installation
 1. Download or clone this repository
 2. Upload the folder to `/wp-content/plugins/dadsfam-email-marketing/`
@@ -61,7 +65,7 @@ Please be patient with us ❤️
 Contact us anytime if you need help: **socials@dadsfam.co.za**
 
 ### Known Issues
-- None currently. All previously reported issues (including bulk delete bug) have been fixed in v3.2.2.
+- None currently. All previously reported issues have been resolved in v3.2.2.
 
 ---
 
