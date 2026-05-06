@@ -73,7 +73,8 @@ Please be patient with us ❤️
 Contact us anytime if you need help: **socials@dadsfam.co.za**
 
 ### Known Issues
-- None currently. All previously reported issues have been resolved in v3.2.2.
+- **Settings page**: "The link you followed has expired" error sometimes appears when clicking **Save Settings**.  
+  **Workaround**: Refresh the page and try saving again. A permanent fix will be included in the next update.
 
 ---
 
