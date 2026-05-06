@@ -60,12 +60,15 @@ If you can’t find it there yet, you can always download the latest version dir
 Please be patient with us ❤️  
 Contact us anytime if you need help: **socials@dadsfam.co.za**
 
+### Known Issues
+- None currently. All previously reported issues (including bulk delete bug) have been fixed in v3.2.2.
+
 ---
 
 ### Changelog
 See full changelog inside the plugin → **Settings → Changelog tab**
 
-**Latest (3.2.2)** – Fixed bulk delete and Edit Draft improvements
+**Latest (3.2.2)** – Fixed campaign bulk delete and improved Edit Draft functionality
 
 ### License
 GPLv2 or later
