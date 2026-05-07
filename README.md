@@ -31,9 +31,18 @@
 ### Screenshots
 
 ![Dashboard](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/email%20marketing%20dashboard%201.png)
-![Settings](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/Settings%20Menu%201.png)
+
+![Settings Menu](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/Settings%20Menu%201.png)
+
 ![Campaign Settings](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/Campaign%20Settings%201.png)
-![Subscribers](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/Subscribers%20Dashboard%201.png)
+
+![Subscribers Dashboard](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/Subscribers%20Dashboard%201.png)
+
+![Premium Features in Settings](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/Premium%20Features%20In%20Settings%20with%20Licence.p...)
+
+![Advanced Tracking](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/Premium%20Feature%20Advanced%20Tracking%20Analyti...)
+
+![Schedule Campaign](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/Schedule%20Premium%20Feature%20and%20more%201.png)
 
 ---
 
@@ -100,19 +109,13 @@ Contact us anytime if you need help: **socials@dadsfam.co.za**
 
 **3.2.2** (2026-05-04)
 - Fixed campaign bulk delete (nested form issue)
-- Improved individual delete buttons
 
 **3.2.1** (2026-05-04)
 - Edit Draft now supports attachments and test emails
-- Fixed various small bugs
 
 **3.2.0** (2026-05-04)
 - Pagination on Campaigns and Subscribers
 - Changelog tab added
-- Edit Draft improvements
-
-**3.1.x & earlier**
-- Bulk group assignment, groups system, WooCommerce import, attachments, drafts, personalisation tags, unsubscribe system, etc.
 
 ---
 
