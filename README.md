@@ -42,7 +42,7 @@
 
 ![Advanced Tracking](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/Premium%20Feature%20Advanced%20Tracking%20Analytics.png)
 
-![CSV Export](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/CSVExcel%20Export.png)
+![CSV Excel Export](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/CSVExcel%20Export.png)
 
 ![Schedule Campaign](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/Schedule%20Premium%20Feature%20and%20more%201.png)
 
