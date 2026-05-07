@@ -38,11 +38,11 @@
 
 ![Subscribers Dashboard](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/Subscribers%20Dashboard%201.png)
 
-![Premium Features in Settings](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/Premium%20Features%20In%20Settings%20with%20Licence.png)
+![Premium Features](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/Premium%20Features%20In%20Settings%20with%20Licence.png)
 
 ![Advanced Tracking](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/Premium%20Feature%20Advanced%20Tracking%20Analytics.png)
 
-![CSV Excel Export](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/CSVExcel%20Export.png)
+![CSV Export](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/CSVExcel%20Export.png)
 
 ![Schedule Campaign](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/Schedule%20Premium%20Feature%20and%20more%201.png)
 
