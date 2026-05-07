@@ -1,55 +1,62 @@
 # DadsFam Email Marketing
 
-**Professional email marketing plugin for WordPress**
+**Professional Email Marketing Plugin for WordPress**
 
-**Version:** 3.2.2  
+**Version:** 3.3.0  
 **Author:** DadsFam  
 **Website:** [dadsfam.co.za](https://www.dadsfam.co.za)
 
 ---
 
 ### Features
+
+#### ✅ Free Features
 - Manage subscribers + groups
+- CSV Import (bulk upload with auto-mapping + duplicate detection)
 - Create, save & send HTML campaigns
-- Send to all subscribers or specific group
+- Send to all or specific groups
 - Personalisation tags: `{{first_name}}`, `{{last_name}}`, `{{email}}`, `{{business}}`
 - Email attachments
-- Test email before sending
+- Send test emails
 - WooCommerce customer import
-- Custom logo, colours & social links
+- Custom logo, colours & social footer links
 - Beautiful unsubscribe page
-- Modern admin interface + pagination
+- Modern card-based admin interface + pagination
+
+#### ⭐ Premium Features (License Key)
+- Campaign Scheduling (send automatically at future date/time)
+- Open & Click Tracking with detailed stats
+- CSV/Excel Export of full subscriber list
 
 ### Screenshots
 
 ![Dashboard](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/email%20marketing%20dashboard%201.png)
-
-![Settings Menu](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/Settings%20Menu%201.png)
-
+![Settings](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/Settings%20Menu%201.png)
 ![Campaign Settings](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/Campaign%20Settings%201.png)
-
-![Subscribers Dashboard](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/Subscribers%20Dashboard%201.png)
+![Subscribers](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/Subscribers%20Dashboard%201.png)
 
 ---
 
 ### Installation
-1. Download or clone this repository
+1. Download the latest release
 2. Upload the folder to `/wp-content/plugins/dadsfam-email-marketing/`
-3. Activate **DadsFam Email Marketing** in WordPress
+3. Activate the plugin
 4. Go to **Email Marketing** in the admin menu
 
 ### Quick Start
-1. Go to **Settings** → set your From Name/Email + logo
-2. Create **Groups** (optional)
-3. Add or import **Subscribers**
-4. Click **New Campaign** → write, preview, test, then send
+1. **Settings → General** — Set your sender name & email
+2. **Settings → Branding** — Upload logo & choose colours
+3. **Settings → ⭐ License** — Enter Premium key (optional)
+4. Create Groups → Add/Import Subscribers → New Campaign
+
+---
 
 ### ❤️ A Note from the Developer
-This plugin is completely free.
+This plugin is and will always remain **100% FREE** for personal and commercial use (core features).
 
-I built it for fun — a Dad from South Africa just trying to make ends meet. Yes, we know AI is advanced and there are bigger/better plugins out there. I do this because I love it.
+I built it for fun — a Dad from South Africa just trying to make ends meet. Yes, we know AI is advanced and there are bigger plugins out there. I do this because I love it.
 
-If you really like what I do and it helps you, please consider purchasing a **Pro License Key**. It’s purely a donation/support that helps put food on the table and lets me keep building awesome free plugins for the WordPress community.
+If you really like what I do and it helps your business, please consider purchasing a **Pro License Key**. It’s purely a donation/support that helps put food on the table and lets me keep building awesome free plugins for the WordPress community.
 
 Thank you for understanding ❤️  
 Love from South Africa 🇿🇦
@@ -65,7 +72,7 @@ Love from South Africa 🇿🇦
 
 ### 📢 WordPress.org Submission
 We are actively submitting all our plugins to the official [WordPress.org Plugin Directory](https://wordpress.org/plugins/).  
-Sometimes approvals can be delayed due to the high volume of submissions.  
+Sometimes approvals can be delayed due to high volume.
 
 If you can’t find it there yet, you can always download the latest version directly from our **[website](https://www.dadsfam.co.za)** or this GitHub repository.
 
@@ -73,15 +80,41 @@ Please be patient with us ❤️
 Contact us anytime if you need help: **socials@dadsfam.co.za**
 
 ### Known Issues
-- **Settings page**: "The link you followed has expired" error sometimes appears when clicking **Save Settings**.  
-  **Workaround**: Refresh the page and try saving again. A permanent fix will be included in the next update.
+- None currently. The major "Settings save - link expired" error has been fully fixed in v3.3.0.
 
 ---
 
 ### Changelog
-See full changelog inside the plugin → **Settings → Changelog tab**
 
-**Latest (3.2.2)** – Fixed campaign bulk delete and improved Edit Draft functionality
+**3.3.0** (2026-05-07) – Major Update
+- 🚀 Premium: Campaign Scheduling (auto-send via WP Cron)
+- 🚀 Premium: Open & Click Tracking with detailed stats
+- ✅ Free: CSV Import with auto-mapping and duplicate detection
+- 🚀 Premium: CSV/Excel Export
+- 🛠 Major Fix: Settings page "The link you followed has expired" error completely resolved (restructured tabs, no nested forms, proper no-cache headers)
+- Improved stability and cache plugin compatibility
+
+**3.2.3** (2026-05-04)
+- Added License tab + Premium badge
+- License verification system
+
+**3.2.2** (2026-05-04)
+- Fixed campaign bulk delete (nested form issue)
+- Improved individual delete buttons
+
+**3.2.1** (2026-05-04)
+- Edit Draft now supports attachments and test emails
+- Fixed various small bugs
+
+**3.2.0** (2026-05-04)
+- Pagination on Campaigns and Subscribers
+- Changelog tab added
+- Edit Draft improvements
+
+**3.1.x & earlier**
+- Bulk group assignment, groups system, WooCommerce import, attachments, drafts, personalisation tags, unsubscribe system, etc.
+
+---
 
 ### License
 GPLv2 or later
