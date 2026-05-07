@@ -38,9 +38,9 @@
 
 ![Subscribers Dashboard](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/Subscribers%20Dashboard%201.png)
 
-![Premium Features in Settings](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/Premium%20Features%20In%20Settings%20with%20Licence.p...)
+![Premium Features in Settings](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/Premium%20Features%20In%20Settings%20with%20Licence.png)
 
-![Advanced Tracking](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/Premium%20Feature%20Advanced%20Tracking%20Analyti...)
+![Advanced Tracking](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/Premium%20Feature%20Advanced%20Tracking%20Analytics.png)
 
 ![Schedule Campaign](https://github.com/DadsFam/dadsfam-email-marketing/blob/main/Schedule%20Premium%20Feature%20and%20more%201.png)
 
@@ -81,7 +81,6 @@ Love from South Africa 🇿🇦
 
 ### 📢 WordPress.org Submission
 We are actively submitting all our plugins to the official [WordPress.org Plugin Directory](https://wordpress.org/plugins/).  
-Sometimes approvals can be delayed due to high volume.
 
 If you can’t find it there yet, you can always download the latest version directly from our **[website](https://www.dadsfam.co.za)** or this GitHub repository.
 
@@ -100,22 +99,14 @@ Contact us anytime if you need help: **socials@dadsfam.co.za**
 - 🚀 Premium: Open & Click Tracking with detailed stats
 - ✅ Free: CSV Import with auto-mapping and duplicate detection
 - 🚀 Premium: CSV/Excel Export
-- 🛠 Major Fix: Settings page "The link you followed has expired" error completely resolved (restructured tabs, no nested forms, proper no-cache headers)
+- 🛠 Major Fix: Settings page "The link you followed has expired" error completely resolved
 - Improved stability and cache plugin compatibility
 
 **3.2.3** (2026-05-04)
 - Added License tab + Premium badge
-- License verification system
 
 **3.2.2** (2026-05-04)
-- Fixed campaign bulk delete (nested form issue)
-
-**3.2.1** (2026-05-04)
-- Edit Draft now supports attachments and test emails
-
-**3.2.0** (2026-05-04)
-- Pagination on Campaigns and Subscribers
-- Changelog tab added
+- Fixed campaign bulk delete
 
 ---
 
