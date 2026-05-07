@@ -3,7 +3,7 @@
  * Plugin Name: DadsFam Email Marketing
  * Plugin URI: https://www.dadsfam.co.za
  * Description: Professional email marketing plugin - subscribers, campaigns, WooCommerce import, custom social links, test emails, attachments, changelog.
- * Version: 3.2.2
+ * Version: 3.3.0
  * Author: DadsFam
  * Author URI: https://www.dadsfam.co.za
  * License: GPL v2 or later
@@ -11,13 +11,68 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'DFEM_VERSION', '3.2.2' );
+define( 'DFEM_VERSION',        '3.3.0' );
+define( 'DFEM_LICENSE_SERVER', 'https://www.dadsfam.co.za/wp-json/dfem-licenses/v1/verify' );
+define( 'DFEM_TRACK_OPEN',     'open' );
+define( 'DFEM_TRACK_CLICK',    'click' );
+
+/* =========================================================
+   CACHE-BUSTER — fires very early, prevents SpeedyCache,
+   WP Rocket, W3 Total Cache, etc. from caching admin pages
+   or admin-ajax (which causes false "Session expired")
+   ========================================================= */
+add_action('plugins_loaded', 'dfem_set_donotcache_constants', 1);
+function dfem_set_donotcache_constants() {
+    $is_dfem_admin = is_admin() && isset($_GET['page']) && strpos((string)$_GET['page'], 'dfem-') === 0;
+    $is_heartbeat  = wp_doing_ajax() && isset($_REQUEST['action']) && $_REQUEST['action'] === 'heartbeat';
+    $is_dfem_post  = isset($_REQUEST['action']) && strpos((string)$_REQUEST['action'], 'dfem_') === 0;
+    if ( $is_dfem_admin || $is_heartbeat || $is_dfem_post ) {
+        if ( ! defined( 'DONOTCACHEPAGE' ) )   define( 'DONOTCACHEPAGE',   true );
+        if ( ! defined( 'DONOTCACHEOBJECT' ) ) define( 'DONOTCACHEOBJECT', true );
+        if ( ! defined( 'DONOTCACHEDB' ) )     define( 'DONOTCACHEDB',     true );
+    }
+}
+
+// Force no-cache headers for all DFEM admin pages — fires before any output,
+// overrides SpeedyCache LBC and any other cache plugin that may have set stale headers
+add_action('admin_init', 'dfem_force_nocache_headers', 1);
+function dfem_force_nocache_headers() {
+    if ( empty( $_GET['page'] ) ) return;
+    $page = (string) $_GET['page'];
+    if ( strpos( $page, 'dfem-' ) !== 0 && strpos( $page, 'dflm-' ) !== 0 ) return;
+    header( 'Cache-Control: no-store, no-cache, must-revalidate, max-age=0' );
+    header( 'Pragma: no-cache' );
+    header( 'Expires: Thu, 01 Jan 1970 00:00:00 GMT' );
+}
 
 /* =========================================================
    CHANGELOG DATA
    ========================================================= */
 function dfem_get_changelog() {
     return [
+        [
+            'version' => '3.3.0',
+            'date'    => '2026-05-07',
+            'label'   => 'major',
+            'changes' => [
+                '🚀 Premium: Campaign Scheduling — schedule campaigns to send at a future date and time automatically via WP Cron',
+                '🚀 Premium: Open & Click Tracking — track who opened your emails and which links they clicked, with per-campaign stats',
+                '✅ Free: CSV Import — bulk import subscribers from a CSV file with auto column mapping and duplicate detection',
+                '🚀 Premium: Excel/CSV Export — export your full subscriber list to a formatted Excel-compatible file',
+                '🛠 Fixed: Settings save "link has expired" error — caused by nested HTML form tags (License form inside main settings form). Settings page completely restructured to render only the active tab per page load — no nested forms possible',
+                '✅ New: Export tab added to Settings for subscriber CSV/Excel export',
+            ],
+        ],
+        [
+            'version' => '3.2.3',
+            'date'    => '2026-05-04',
+            'label'   => 'new',
+            'changes' => [
+                '✅ Added License tab to Settings — activate your own DadsFam Premium key to unlock premium features',
+                '✅ Premium badge displays in header when a valid key is active',
+                '✅ License verification calls dadsfam.co.za and caches result for 7 days',
+            ],
+        ],
         [
             'version' => '3.2.2',
             'date'    => '2026-05-04',
@@ -115,7 +170,91 @@ function dfem_get_changelog() {
 }
 
 /* =========================================================
-   ACTIVATION
+   FREEMIUM LICENSE SYSTEM
+   ========================================================= */
+function dfem_get_license_key() {
+    return trim( get_option( 'dfem_license_key', '' ) );
+}
+
+function dfem_is_premium() {
+    $status = get_transient( 'dfem_license_status' );
+    if ( $status === 'valid'   ) return true;
+    if ( $status === 'invalid' ) return false;
+
+    $key = dfem_get_license_key();
+    if ( empty( $key ) ) {
+        set_transient( 'dfem_license_status', 'invalid', WEEK_IN_SECONDS );
+        return false;
+    }
+
+    // Detect loopback: if license server is THIS site, query DB directly
+    $server_host  = parse_url( DFEM_LICENSE_SERVER, PHP_URL_HOST );
+    $current_host = parse_url( home_url(), PHP_URL_HOST );
+    $is_loopback  = $server_host && $current_host && (
+        $server_host === $current_host ||
+        'www.' . $current_host === $server_host ||
+        $current_host === 'www.' . $server_host
+    );
+
+    if ( $is_loopback ) {
+        // Owner site: verify key directly in local DB — no HTTP calls ever
+        global $wpdb;
+        $prefix  = $wpdb->prefix;
+        $license = $wpdb->get_row( $wpdb->prepare(
+            "SELECT status FROM {$prefix}dflm_licenses WHERE license_key=%s AND status='active' LIMIT 1",
+            $key
+        ));
+        $valid  = ! empty( $license );
+        $status = $valid ? 'valid' : 'invalid';
+        set_transient( 'dfem_license_status', $status, WEEK_IN_SECONDS );
+        update_option( 'dfem_license_status_cache', $status );
+        return $valid;
+    }
+
+    // External site: background cron verification (never block page load)
+    if ( ! wp_next_scheduled( 'dfem_bg_license_check' ) ) {
+        wp_schedule_single_event( time() + 30, 'dfem_bg_license_check' );
+    }
+    $cached = get_option( 'dfem_license_status_cache', 'invalid' );
+    return $cached === 'valid';
+}
+
+// Background license check — runs via WP Cron, safe from page-load context
+add_action( 'dfem_bg_license_check', 'dfem_bg_verify_license' );
+function dfem_bg_verify_license() {
+    dfem_verify_license( dfem_get_license_key() );
+}
+
+function dfem_verify_license( $key ) {
+    if ( empty( $key ) ) {
+        set_transient( 'dfem_license_status', 'invalid', WEEK_IN_SECONDS );
+        return false;
+    }
+    $response = wp_remote_post( DFEM_LICENSE_SERVER, [
+        'timeout'   => 8,
+        'blocking'  => true,
+        'sslverify' => true,
+        'body'      => [
+            'license_key' => sanitize_text_field( $key ),
+            'site_url'    => home_url(),
+            'plugin_ver'  => DFEM_VERSION,
+        ],
+    ]);
+    if ( is_wp_error( $response ) ) {
+        $existing = get_option( 'dfem_license_status_cache', 'invalid' );
+        set_transient( 'dfem_license_status', $existing, DAY_IN_SECONDS );
+        return $existing === 'valid';
+    }
+    $body   = json_decode( wp_remote_retrieve_body( $response ), true );
+    $valid  = ! empty( $body['valid'] ) && $body['valid'] === true;
+    $status = $valid ? 'valid' : 'invalid';
+    set_transient( 'dfem_license_status', $status, WEEK_IN_SECONDS );
+    update_option( 'dfem_license_status_cache', $status );
+    return $valid;
+}
+
+/* =========================================================
+   ACTIVATION + DEACTIVATION + CRON + TRACKING
    ========================================================= */
 register_activation_hook( __FILE__, 'dfem_activate' );
 function dfem_activate() {
@@ -150,19 +289,46 @@ function dfem_activate() {
         body LONGTEXT NOT NULL,
         group_id BIGINT UNSIGNED DEFAULT 0,
         sent_to INT DEFAULT 0,
-        status ENUM('draft','sent') DEFAULT 'draft',
+        opens INT DEFAULT 0,
+        clicks INT DEFAULT 0,
+        tracking_enabled TINYINT DEFAULT 0,
+        status ENUM('draft','scheduled','sent') DEFAULT 'draft',
+        scheduled_at DATETIME DEFAULT NULL,
         sent_at DATETIME DEFAULT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (id)
     ) $charset;");
 
-    // Add group_id column if upgrading from older version
-    $cols = $wpdb->get_col("SHOW COLUMNS FROM {$wpdb->prefix}dfem_campaigns LIKE 'group_id'");
-    if ( empty($cols) ) {
-        $wpdb->query("ALTER TABLE {$wpdb->prefix}dfem_campaigns ADD COLUMN group_id BIGINT UNSIGNED DEFAULT 0 AFTER body");
+    dbDelta("CREATE TABLE IF NOT EXISTS {$wpdb->prefix}dfem_tracking (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        campaign_id BIGINT UNSIGNED NOT NULL,
+        subscriber_id BIGINT UNSIGNED DEFAULT 0,
+        email VARCHAR(200) DEFAULT '',
+        type ENUM('open','click') NOT NULL,
+        url VARCHAR(1000) DEFAULT '',
+        ip_address VARCHAR(45) DEFAULT '',
+        user_agent VARCHAR(500) DEFAULT '',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY campaign_id (campaign_id)
+    ) $charset;");
+
+    // Add missing columns on upgrade
+    $cols = $wpdb->get_col("SHOW COLUMNS FROM {$wpdb->prefix}dfem_campaigns");
+    $add_map = [
+        'group_id'         => "ADD COLUMN group_id BIGINT UNSIGNED DEFAULT 0 AFTER body",
+        'opens'            => "ADD COLUMN opens INT DEFAULT 0 AFTER sent_to",
+        'clicks'           => "ADD COLUMN clicks INT DEFAULT 0 AFTER opens",
+        'tracking_enabled' => "ADD COLUMN tracking_enabled TINYINT DEFAULT 0 AFTER clicks",
+        'scheduled_at'     => "ADD COLUMN scheduled_at DATETIME DEFAULT NULL AFTER status",
+    ];
+    foreach ($add_map as $col => $sql) {
+        if (!in_array($col, $cols)) {
+            $wpdb->query("ALTER TABLE {$wpdb->prefix}dfem_campaigns $sql");
+        }
     }
 
-    if ( ! get_option('dfem_settings') ) {
+    if (!get_option('dfem_settings')) {
         update_option('dfem_settings', [
             'from_name'     => get_bloginfo('name'),
             'from_email'    => get_bloginfo('admin_email'),
@@ -173,7 +339,7 @@ function dfem_activate() {
         ]);
     }
 
-    if ( ! get_option('dfem_unsub_page_id') ) {
+    if (!get_option('dfem_unsub_page_id')) {
         $page_id = wp_insert_post([
             'post_title'   => 'Unsubscribe',
             'post_name'    => 'email-unsubscribe',
@@ -183,6 +349,136 @@ function dfem_activate() {
         ]);
         update_option('dfem_unsub_page_id', $page_id);
     }
+
+    if (!wp_next_scheduled('dfem_process_scheduled')) {
+        wp_schedule_event(time(), 'dfem_five_min', 'dfem_process_scheduled');
+    }
+}
+
+register_deactivation_hook(__FILE__, function() { wp_clear_scheduled_hook('dfem_process_scheduled'); });
+
+add_filter('cron_schedules', function($s) {
+    $s['dfem_five_min'] = ['interval' => 300, 'display' => 'Every 5 Min (DFEM)'];
+    return $s;
+});
+
+add_action('dfem_process_scheduled', 'dfem_run_scheduled_campaigns');
+function dfem_run_scheduled_campaigns() {
+    global $wpdb;
+    $due = $wpdb->get_results("SELECT id FROM {$wpdb->prefix}dfem_campaigns WHERE status='scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= NOW()");
+    foreach ($due as $row) { dfem_dispatch_campaign($row->id); }
+}
+
+// Shared send helper — used by manual send AND cron
+function dfem_dispatch_campaign($campaign_id) {
+    global $wpdb, $dfem_sending;
+    $camp = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}dfem_campaigns WHERE id=%d", (int)$campaign_id));
+    if (!$camp || $camp->status === 'sent') return 0;
+    $settings   = get_option('dfem_settings', []);
+    $from_name  = $settings['from_name']  ?? get_bloginfo('name');
+    $from_email = $settings['from_email'] ?? get_bloginfo('admin_email');
+    $where      = "WHERE status='subscribed'" . ($camp->group_id ? $wpdb->prepare(" AND group_id=%d", $camp->group_id) : '');
+    $subs       = $wpdb->get_results("SELECT * FROM {$wpdb->prefix}dfem_subscribers $where");
+    if (empty($subs)) return 0;
+    $attach_key  = 'dfem_attachments_draft_' . $camp->id . '_' . get_current_user_id();
+    $files       = array_column(get_transient($attach_key) ?: [], 'path');
+    $sent = 0;
+    $dfem_sending = true;
+    foreach ($subs as $sub) {
+        $body = str_replace(['{{first_name}}','{{last_name}}','{{email}}','{{business}}'],
+            [esc_html($sub->first_name),esc_html($sub->last_name),esc_html($sub->email),esc_html($sub->business_name)],
+            $camp->body);
+        if (dfem_is_premium() && $camp->tracking_enabled) {
+            $body = dfem_wrap_tracking_links($body, $camp->id, $sub->token);
+        }
+        $html = dfem_build_email($camp->subject, $body, dfem_unsub_url($sub->email, $sub->token), $camp->id, $sub->token);
+        $hdrs = ['Content-Type: text/html; charset=UTF-8', "From: $from_name <$from_email>"];
+        if (wp_mail($sub->email, $camp->subject, $html, $hdrs, $files)) $sent++;
+    }
+    $dfem_sending = false;
+    $wpdb->update("{$wpdb->prefix}dfem_campaigns", ['status'=>'sent','sent_to'=>$sent,'sent_at'=>current_time('mysql')], ['id'=>$camp->id], ['%s','%d','%s'], ['%d']);
+    delete_transient($attach_key);
+    return $sent;
+}
+
+// Tracking URL handler (open pixel + click redirect) — front-end only
+add_action('init', 'dfem_handle_tracking_request');
+function dfem_handle_tracking_request() {
+    // Never run during admin or AJAX requests
+    if ( is_admin() || wp_doing_ajax() || wp_doing_cron() ) return;
+    if ( !isset($_GET['dfem_track']) ) return;
+    $type    = sanitize_text_field($_GET['dfem_track']);
+    $camp_id = (int)($_GET['c'] ?? 0);
+    $token   = sanitize_text_field($_GET['s'] ?? '');
+    if (!$camp_id || !$token) return;
+    global $wpdb;
+    $sub = $wpdb->get_row($wpdb->prepare("SELECT id,email FROM {$wpdb->prefix}dfem_subscribers WHERE token=%s", $token));
+    $ip  = sanitize_text_field($_SERVER['REMOTE_ADDR'] ?? '');
+    $ua  = sanitize_text_field(substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 500));
+    if ($type === 'open') {
+        if ($sub) {
+            $wpdb->insert("{$wpdb->prefix}dfem_tracking", ['campaign_id'=>$camp_id,'subscriber_id'=>$sub->id,'email'=>$sub->email,'type'=>'open','url'=>'','ip_address'=>$ip,'user_agent'=>$ua],['%d','%d','%s','%s','%s','%s','%s']);
+            $wpdb->query($wpdb->prepare("UPDATE {$wpdb->prefix}dfem_campaigns SET opens=opens+1 WHERE id=%d", $camp_id));
+        }
+        header('Content-Type: image/gif');
+        header('Cache-Control: no-store,no-cache,must-revalidate');
+        echo base64_decode('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7');
+        exit;
+    } elseif ($type === 'click') {
+        $url = esc_url_raw(base64_decode(sanitize_text_field($_GET['u'] ?? '')));
+        if ($sub && $url) {
+            $wpdb->insert("{$wpdb->prefix}dfem_tracking", ['campaign_id'=>$camp_id,'subscriber_id'=>$sub->id,'email'=>$sub->email,'type'=>'click','url'=>substr($url,0,1000),'ip_address'=>$ip,'user_agent'=>$ua],['%d','%d','%s','%s','%s','%s','%s']);
+            $wpdb->query($wpdb->prepare("UPDATE {$wpdb->prefix}dfem_campaigns SET clicks=clicks+1 WHERE id=%d", $camp_id));
+        }
+        wp_redirect($url ?: home_url()); exit;
+    }
+}
+
+// CSV Export via admin_post — fires BEFORE any HTML output, safe to send headers
+add_action('admin_post_dfem_export_csv', 'dfem_handle_csv_export');
+function dfem_handle_csv_export() {
+    if ( !current_user_can('manage_options') ) wp_die('Unauthorized');
+    if ( !isset($_POST['_wpnonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_wpnonce'])), 'dfem_export') ) {
+        wp_die('Security check failed. Please go back and try again.');
+    }
+    if ( !dfem_is_premium() ) {
+        wp_redirect(admin_url('admin.php?page=dfem-settings&tab=export&notice=premium'));
+        exit;
+    }
+    global $wpdb;
+    $export_gid = (int)($_POST['export_group_id'] ?? 0);
+    $where      = $export_gid ? $wpdb->prepare("WHERE s.group_id=%d", $export_gid) : "";
+    $subs       = $wpdb->get_results("SELECT s.*, g.name as group_name FROM {$wpdb->prefix}dfem_subscribers s LEFT JOIN {$wpdb->prefix}dfem_groups g ON g.id=s.group_id $where ORDER BY s.created_at DESC");
+    $filename   = 'dfem-subscribers-' . date('Y-m-d') . '.csv';
+    header('Content-Type: text/csv; charset=UTF-8');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    header('Cache-Control: no-store, no-cache, must-revalidate');
+    header('Pragma: no-cache');
+    echo "\xEF\xBB\xBF"; // UTF-8 BOM — makes Excel open correctly
+    $out = fopen('php://output', 'w');
+    fputcsv($out, ['First Name', 'Last Name', 'Email', 'Business Name', 'Group', 'Status', 'Date Added']);
+    foreach ($subs as $s) {
+        fputcsv($out, [
+            $s->first_name,
+            $s->last_name,
+            $s->email,
+            $s->business_name,
+            $s->group_name ?: '',
+            $s->status,
+            date('d M Y', strtotime($s->created_at)),
+        ]);
+    }
+    fclose($out);
+    exit;
+}
+
+function dfem_wrap_tracking_links($body, $campaign_id, $sub_token) {
+    return preg_replace_callback('/<a(\s[^>]*)?href=["\']([^"\']+)["\']([^>]*)>/i', function($m) use ($campaign_id, $sub_token) {
+        $url = $m[2];
+        if (strpos($url,'dfem_track')!==false || strpos($url,'email-unsubscribe')!==false) return $m[0];
+        $track = add_query_arg(['dfem_track'=>'click','c'=>$campaign_id,'s'=>$sub_token,'u'=>base64_encode($url)], home_url('/'));
+        return str_replace($url, esc_url($track), $m[0]);
+    }, $body);
 }
 
 /* =========================================================
@@ -224,12 +520,13 @@ add_filter('wp_mail_from_name', function($name) {
    ========================================================= */
 add_action('admin_menu', 'dfem_admin_menu');
 function dfem_admin_menu() {
-    add_menu_page( 'DadsFam Email Marketing', 'Email Marketing', 'manage_options', 'dfem-dashboard', 'dfem_page_dashboard', 'dashicons-email-alt', 26 );
+    add_menu_page('DadsFam Email Marketing','Email Marketing','manage_options','dfem-dashboard','dfem_page_dashboard','dashicons-email-alt',26);
     add_submenu_page('dfem-dashboard','Dashboard',    'Dashboard',    'manage_options','dfem-dashboard',    'dfem_page_dashboard');
     add_submenu_page('dfem-dashboard','Subscribers',  'Subscribers',  'manage_options','dfem-subscribers',  'dfem_page_subscribers');
     add_submenu_page('dfem-dashboard','Groups',       'Groups',       'manage_options','dfem-groups',       'dfem_page_groups');
     add_submenu_page('dfem-dashboard','Campaigns',    'Campaigns',    'manage_options','dfem-campaigns',    'dfem_page_campaigns');
     add_submenu_page('dfem-dashboard','New Campaign', 'New Campaign', 'manage_options','dfem-new-campaign', 'dfem_page_new_campaign');
+    add_submenu_page('dfem-dashboard','📊 Tracking',  '📊 Tracking',  'manage_options','dfem-tracking',     'dfem_page_tracking');
     add_submenu_page('dfem-dashboard','Settings',     'Settings',     'manage_options','dfem-settings',     'dfem_page_settings');
 }
 
@@ -314,7 +611,16 @@ function dfem_styles() { ?>
 .dfem-cl-version .date{color:var(--df-muted);font-size:.84em;}
 .dfem-cl-changes{margin:0;padding-left:20px;line-height:2;color:var(--df-text);font-size:.92em;}
 /* Pagination */
-.dfem-pagination{display:flex;gap:7px;align-items:center;justify-content:center;margin-top:20px;flex-wrap:wrap;}
+.dfem-badge-scheduled{background:#fef3c7;color:#92400e;padding:3px 10px;border-radius:20px;font-size:.78em;font-weight:700;}
+.dfem-badge-gold{background:linear-gradient(135deg,#fef3c7,#fde68a);color:#92400e;padding:3px 10px;border-radius:20px;font-size:.78em;font-weight:700;border:1px solid #f59e0b;}
+.dfem-progress{background:#e8edf2;border-radius:20px;height:8px;overflow:hidden;margin-top:6px;}
+.dfem-progress-bar{background:linear-gradient(90deg,var(--df-blue),var(--df-green));height:100%;border-radius:20px;transition:width .4s;}
+.dfem-stat-mini{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:#f8faff;border-radius:8px;font-size:.82em;font-weight:600;color:var(--df-muted);}
+.dfem-schedule-box{background:#fffbeb;border:2px dashed #f59e0b;border-radius:10px;padding:18px;margin-top:16px;}
+.dfem-tracking-row{display:grid;grid-template-columns:1fr 80px 80px 100px;gap:10px;align-items:center;padding:12px 0;border-bottom:1px solid var(--df-border);font-size:.9em;}
+.dfem-tracking-row:last-child{border-bottom:none;}
+input[type=datetime-local]{font-family:inherit;}
+
 .dfem-page-current{padding:5px 12px;background:var(--df-blue);color:#fff;border-radius:8px;font-weight:700;font-size:.85em;}
 .dfem-page-info{text-align:center;color:var(--df-muted);font-size:.85em;margin-top:8px;}
 @media(max-width:768px){.dfem-grid2{grid-template-columns:1fr;}.dfem-body,.dfem-header{padding:18px;}.dfem-tabs{flex-wrap:wrap;}}
@@ -329,7 +635,12 @@ function dfem_header( $sub = '' ) {
     <div class="dfem-wrap">
     <div class="dfem-header">
         <h1>📧 DadsFam Email Marketing<?php if($sub) echo " <span>/ $sub</span>"; ?></h1>
-        <span class="dfem-badge">v<?php echo DFEM_VERSION; ?></span>
+        <div style="display:flex;align-items:center;gap:10px;">
+            <?php if ( dfem_is_premium() ): ?>
+            <span class="dfem-badge" style="background:linear-gradient(135deg,#f59e0b,#d97706);">⭐ Premium</span>
+            <?php endif; ?>
+            <span class="dfem-badge">v<?php echo DFEM_VERSION; ?></span>
+        </div>
     </div>
     <div class="dfem-body">
 <?php }
@@ -403,14 +714,29 @@ function dfem_page_dashboard() {
     <div class="dfem-grid2">
     <div class="dfem-card">
         <h2>📖 How to Use</h2>
-        <ol style="margin:0;padding-left:20px;line-height:2;color:var(--df-text);font-size:.92em;">
-            <li>Go to <strong>Settings</strong> — set your sender name, email, logo and brand colour</li>
-            <li>Go to <strong>Groups</strong> — create groups to organise your subscribers (e.g. "Marketing", "VIP")</li>
-            <li>Go to <strong>Subscribers</strong> — add subscribers manually or import from WooCommerce</li>
-            <li>Go to <strong>New Campaign</strong> — write your email, choose a group (or all), preview it, send a test first</li>
-            <li>Use <code>{{first_name}}</code> <code>{{last_name}}</code> <code>{{email}}</code> <code>{{business}}</code> tags for personalisation</li>
-            <li>Go to <strong>Campaigns</strong> — view sent history, preview emails, edit drafts, or delete records</li>
+        <ol style="margin:0;padding-left:20px;line-height:2.2;color:var(--df-text);font-size:.92em;">
+            <li><strong>Settings → General</strong> — Set your sender name and from email address.</li>
+            <li><strong>Settings → Branding</strong> — Upload your logo, pick your brand colour, add social links.</li>
+            <li><strong>Settings → ⭐ License</strong> — Enter a Premium Key to unlock scheduling, tracking &amp; export.</li>
+            <li><strong>Groups</strong> — Create groups to segment your audience (e.g. VIP, Newsletter, Leads).</li>
+            <li><strong>Subscribers</strong> — Add manually, import from WooCommerce, or upload a CSV file.</li>
+            <li><strong>New Campaign</strong> — Write your email. Use <code>{{first_name}}</code> <code>{{last_name}}</code> <code>{{email}}</code> <code>{{business}}</code> to personalise every email automatically.</li>
+            <li><strong>Always Send a Test first</strong> — Use the "Send Test" button before sending to your full list.</li>
+            <li><strong>Send Now or Schedule (Premium)</strong> — Send immediately, or schedule to auto-send at a future date and time.</li>
+            <li><strong>📊 Tracking (Premium)</strong> — Tick "Enable Tracking" when composing to track email opens and link clicks per campaign.</li>
+            <li><strong>Campaigns</strong> — View sent history with open/click stats, edit drafts, or delete records.</li>
+            <li><strong>Settings → Export (Premium)</strong> — Download your subscriber list as an Excel-compatible CSV file.</li>
         </ol>
+        <div style="margin-top:18px;padding:14px 18px;background:#f8faff;border-radius:10px;border-left:4px solid var(--df-blue);">
+            <strong>💡 Pro Tips:</strong>
+            <ul style="margin:8px 0 0;padding-left:18px;line-height:2;color:var(--df-muted);font-size:.9em;">
+                <li>Use <strong>Groups</strong> for targeted sends — targeted emails get far higher open rates than mass blasts.</li>
+                <li>Use <code>{{first_name}}</code> in your <strong>subject line</strong> too — it dramatically improves open rates.</li>
+                <li>Always send a <strong>test email</strong> first — check it on mobile, check all links, check personalisation tags.</li>
+                <li>The <strong>unsubscribe link</strong> is added automatically to every email footer — never add it manually.</li>
+                <li>If emails land in spam, make sure the <strong>From Email</strong> in Settings matches your actual domain.</li>
+            </ul>
+        </div>
     </div>
     <div class="dfem-card">
         <h2>💬 Support & Contact</h2>
@@ -531,7 +857,48 @@ function dfem_page_subscribers() {
                 $msg="<div class='dfem-alert dfem-alert-success'>✅ Imported <strong>$added</strong> customers{$gtext}. Skipped <strong>$skipped</strong> (duplicates/invalid).</div>";
             }
         }
-    }
+        if ( $act === 'import_csv' ) {
+            if ( empty($_FILES['csv_file']['tmp_name']) ) {
+                $msg = '<div class="dfem-alert dfem-alert-error">❌ No file uploaded. Please choose a CSV file.</div>';
+            } else {
+                $csv_gid = (int)($_POST['csv_group_id']??0);
+                $handle  = fopen($_FILES['csv_file']['tmp_name'], 'r');
+                $headers = array_map('strtolower', array_map('trim', fgetcsv($handle)));
+                // Map column indexes
+                $col_map = [];
+                $field_names = ['email','first_name','firstname','first name','last_name','lastname','last name','business_name','business','company','name'];
+                foreach ($headers as $i => $h) {
+                    $h = str_replace([' ','_'], '', strtolower($h));
+                    if (in_array($h, ['email','emailaddress'])) $col_map['email'] = $i;
+                    elseif (in_array($h, ['firstname','first_name','first'])) $col_map['first_name'] = $i;
+                    elseif (in_array($h, ['lastname','last_name','last','surname'])) $col_map['last_name'] = $i;
+                    elseif (in_array($h, ['businessname','business_name','business','company','companyname'])) $col_map['business_name'] = $i;
+                }
+                if (!isset($col_map['email'])) {
+                    $msg = '<div class="dfem-alert dfem-alert-error">❌ Could not find an "Email" column in your CSV. Please ensure the first row has column headers including "Email".</div>';
+                } else {
+                    $added=0; $skipped=0; $invalid=0;
+                    while (($row = fgetcsv($handle)) !== false) {
+                        $email = isset($row[$col_map['email']]) ? sanitize_email(trim($row[$col_map['email']])) : '';
+                        if (!is_email($email)) { $invalid++; continue; }
+                        if ($wpdb->get_var($wpdb->prepare("SELECT id FROM $table WHERE email=%s", $email))) { $skipped++; continue; }
+                        $wpdb->insert($table, [
+                            'email'         => $email,
+                            'first_name'    => sanitize_text_field($row[$col_map['first_name'] ?? -1] ?? ''),
+                            'last_name'     => sanitize_text_field($row[$col_map['last_name']  ?? -1] ?? ''),
+                            'business_name' => sanitize_text_field($row[$col_map['business_name'] ?? -1] ?? ''),
+                            'group_id'      => $csv_gid,
+                            'status'        => 'subscribed',
+                            'token'         => wp_generate_password(32, false),
+                        ], ['%s','%s','%s','%s','%d','%s','%s']);
+                        $added++;
+                    }
+                    fclose($handle);
+                    $msg = "<div class='dfem-alert dfem-alert-success'>✅ CSV import complete: <strong>$added</strong> imported, <strong>$skipped</strong> duplicates skipped, <strong>$invalid</strong> invalid emails ignored.</div>";
+                }
+            }
+        }
+    } // end if dfem_action POST
 
     $editing = isset($_GET['edit'])?$wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}dfem_subscribers WHERE id=%d",(int)$_GET['edit'])):null;
     $search  = isset($_GET['s'])?sanitize_text_field($_GET['s']):'';
@@ -593,6 +960,36 @@ function dfem_page_subscribers() {
         </form>
     </div>
     <?php endif; ?>
+
+    <div class="dfem-card">
+        <h2>📄 Import from CSV</h2>
+        <p style="color:var(--df-muted);margin:0 0 14px;font-size:.92em">Upload a CSV file to bulk import subscribers. First row must be column headers. Required: <strong>Email</strong>. Optional: <strong>First Name</strong>, <strong>Last Name</strong>, <strong>Business Name</strong>. Column order doesn't matter — auto-detected by header name.</p>
+        <form method="post" enctype="multipart/form-data">
+            <?php wp_nonce_field('dfem_sub_action'); ?>
+            <input type="hidden" name="dfem_action" value="import_csv">
+            <div class="dfem-grid2">
+                <div class="dfem-form-row">
+                    <label>CSV File <span style="color:red">*</span></label>
+                    <input type="file" name="csv_file" accept=".csv,text/csv" required style="padding:8px;border:2px dashed var(--df-border);border-radius:8px;background:#f8faff;width:100%;box-sizing:border-box;">
+                    <small style="color:var(--df-muted)">Max: <?php echo ini_get('upload_max_filesize'); ?>. UTF-8 encoding recommended.</small>
+                </div>
+                <div class="dfem-form-row">
+                    <label>Assign to Group <em style="font-weight:400;color:var(--df-muted)">(optional)</em></label>
+                    <?php $csv_groups=$wpdb->get_results("SELECT * FROM {$wpdb->prefix}dfem_groups ORDER BY name"); ?>
+                    <select name="csv_group_id" style="width:100%;padding:9px 13px;border:2px solid var(--df-border);border-radius:8px;font-size:.93em;">
+                        <option value="0">— No Group —</option>
+                        <?php foreach($csv_groups as $g): ?><option value="<?php echo $g->id; ?>"><?php echo esc_html($g->name); ?></option><?php endforeach; ?>
+                    </select>
+                </div>
+            </div>
+            <div style="background:#f8faff;padding:12px 16px;border-radius:8px;border:1px solid var(--df-border);margin-bottom:14px;font-size:.86em;color:var(--df-muted)">
+                📋 <strong style="color:var(--df-text)">Example CSV format (headers in row 1):</strong><br>
+                <code style="font-size:.9em">Email, First Name, Last Name, Business Name</code><br>
+                <code style="font-size:.9em">jane@example.com, Jane, Smith, Acme Ltd</code>
+            </div>
+            <button type="submit" class="dfem-btn dfem-btn-primary">📄 Import CSV</button>
+        </form>
+    </div>
 
     <div class="dfem-card">
         <h2>👥 Subscriber List <span style="font-size:.72em;font-weight:400;color:var(--df-muted)">(<?php echo $total_subs; ?> total · page <?php echo $paged; ?> of <?php echo $total_pages; ?>)</span></h2>
@@ -1052,16 +1449,26 @@ function dfem_page_campaigns() {
             <div class="dfem-table-wrap"><table class="dfem-table">
                 <thead><tr>
                     <th><input type="checkbox" id="dfem_select_all_camps" style="cursor:pointer"></th>
-                    <th>Subject</th><th>Group</th><th>Status</th><th>Sent To</th><th>Sent</th><th>Created</th><th>Actions</th>
+                    <th>Subject</th><th>Group</th><th>Status</th><th>Sent To</th><th>Opens / Clicks</th><th>Sent / Scheduled</th><th>Created</th><th>Actions</th>
                 </tr></thead>
                 <tbody><?php if($camps): foreach($camps as $c): ?>
                 <tr>
                     <td><input type="checkbox" class="cc" name="bulk_ids[]" value="<?php echo $c->id; ?>"></td>
                     <td><strong><?php echo esc_html($c->subject); ?></strong></td>
                     <td><?php echo $c->group_name ? '<span class="dfem-badge-purple">📍 '.esc_html($c->group_name).'</span>' : '<span style="color:var(--df-muted);font-size:.85em">All subscribers</span>'; ?></td>
-                    <td><?php echo $c->status==='sent'?'<span class="dfem-badge-green">📤 Sent</span>':'<span class="dfem-badge-gray">📝 Draft</span>'; ?></td>
-                    <td><?php echo $c->sent_to?$c->sent_to.' recipients':'—'; ?></td>
-                    <td><?php echo $c->sent_at?date('d M Y H:i',strtotime($c->sent_at)):'—'; ?></td>
+                    <td><?php
+                        if($c->status==='sent') echo '<span class="dfem-badge-green">📤 Sent</span>';
+                        elseif($c->status==='scheduled') echo '<span class="dfem-badge-scheduled">📅 Scheduled</span>';
+                        else echo '<span class="dfem-badge-gray">📝 Draft</span>';
+                    ?></td>
+                    <td><?php echo $c->sent_to ? $c->sent_to.' recipients' : ($c->status==='scheduled' ? '<span style="color:var(--df-muted)">Pending</span>' : '—'); ?></td>
+                    <td>
+                        <?php if($c->status==='sent' && isset($c->opens)): ?>
+                        <span class="dfem-stat-mini" title="Opens">👁️ <?php echo (int)$c->opens; ?></span>
+                        <span class="dfem-stat-mini" title="Clicks">🔗 <?php echo (int)$c->clicks; ?></span>
+                        <?php else: echo '—'; endif; ?>
+                    </td>
+                    <td><?php echo $c->status==='scheduled' && $c->scheduled_at ? date('d M Y H:i',strtotime($c->scheduled_at)) : ($c->sent_at ? date('d M Y H:i',strtotime($c->sent_at)) : '—'); ?></td>
                     <td><?php echo date('d M Y',strtotime($c->created_at)); ?></td>
                     <td style="white-space:nowrap">
                         <a href="?page=dfem-campaigns&preview=<?php echo $c->id; ?>" class="dfem-btn dfem-btn-secondary dfem-btn-sm">👁️ Preview</a>
@@ -1072,7 +1479,7 @@ function dfem_page_campaigns() {
                         <button type="button" class="dfem-btn dfem-btn-danger dfem-btn-sm dfem-camp-del" data-id="<?php echo $c->id; ?>">🗑️</button>
                     </td>
                 </tr>
-                <?php endforeach; else: ?><tr><td colspan="8" style="text-align:center;padding:28px;color:var(--df-muted)">No campaigns yet.</td></tr><?php endif; ?>
+                <?php endforeach; else: ?><tr><td colspan="9" style="text-align:center;padding:28px;color:var(--df-muted)">No campaigns yet.</td></tr><?php endif; ?>
                 </tbody>
             </table></div>
             <?php if($camps): ?>
@@ -1149,13 +1556,29 @@ function dfem_page_new_campaign() {
             if(isset($attachments[$idx])){@unlink($attachments[$idx]['path']);array_splice($attachments,$idx,1);set_transient($attach_key,array_values($attachments),3600);}
             $msg='<div class="dfem-alert dfem-alert-success">✅ Attachment removed.</div>';
         }
-        if ( empty($subject) && in_array($act,['preview','send']) ) {
+        if ( empty($subject) && in_array($act,['preview','send','schedule']) ) {
             $msg='<div class="dfem-alert dfem-alert-error">❌ Subject is required.</div>';
         } elseif ( $act==='save_draft' ) {
             if(empty($subject)) { $msg='<div class="dfem-alert dfem-alert-error">❌ Subject is required to save a draft.</div>'; }
             else {
                 $wpdb->insert($wpdb->prefix.'dfem_campaigns',['subject'=>$subject,'body'=>$body,'group_id'=>$group_id,'status'=>'draft'],['%s','%s','%d','%s']);
                 $msg='<div class="dfem-alert dfem-alert-success">✅ Draft saved! <a href="?page=dfem-campaigns">View all →</a></div>';
+            }
+        } elseif ( $act==='schedule' ) {
+            if (!dfem_is_premium()) {
+                $msg='<div class="dfem-alert dfem-alert-error">🔒 Campaign Scheduling requires a Premium license key.</div>';
+            } elseif (empty($subject)) {
+                $msg='<div class="dfem-alert dfem-alert-error">❌ Subject is required.</div>';
+            } else {
+                $sched_raw = sanitize_text_field($_POST['scheduled_at'] ?? '');
+                $sched_at  = $sched_raw ? date('Y-m-d H:i:s', strtotime($sched_raw)) : null;
+                if (!$sched_at || strtotime($sched_at) <= time()) {
+                    $msg='<div class="dfem-alert dfem-alert-error">❌ Please choose a future date and time for scheduling.</div>';
+                } else {
+                    $track = dfem_is_premium() && !empty($_POST['tracking_enabled']) ? 1 : 0;
+                    $wpdb->insert($wpdb->prefix.'dfem_campaigns',['subject'=>$subject,'body'=>$body,'group_id'=>$group_id,'status'=>'scheduled','scheduled_at'=>$sched_at,'tracking_enabled'=>$track],['%s','%s','%d','%s','%s','%d']);
+                    $msg='<div class="dfem-alert dfem-alert-success">✅ Campaign scheduled for <strong>'.date('d M Y H:i',strtotime($sched_at)).'</strong>! <a href="?page=dfem-campaigns">View campaigns →</a></div>';
+                }
             }
         } elseif ( $act==='preview' ) {
             dfem_header('Email Preview');
@@ -1186,22 +1609,14 @@ function dfem_page_new_campaign() {
             $subs = $wpdb->get_results("SELECT * FROM {$wpdb->prefix}dfem_subscribers $where");
             if(empty($subs)){$msg=$group_id?'<div class="dfem-alert dfem-alert-error">❌ No active subscribers in this group.</div>':'<div class="dfem-alert dfem-alert-error">❌ No active subscribers.</div>';}
             else {
-                $from_name  = $settings['from_name']  ?? get_bloginfo('name');
-                $from_email = $settings['from_email'] ?? get_bloginfo('admin_email');
-                $files = array_column($attachments,'path');
-                $sent  = 0;
-                global $dfem_sending; $dfem_sending = true;
-                foreach($subs as $sub){
-                    $pb   = str_replace(['{{first_name}}','{{last_name}}','{{email}}','{{business}}'],
-                        [esc_html($sub->first_name),esc_html($sub->last_name),esc_html($sub->email),esc_html($sub->business_name)],$body);
-                    $html = dfem_build_email($subject,$pb,dfem_unsub_url($sub->email,$sub->token));
-                    $hdrs = ['Content-Type: text/html; charset=UTF-8',"From: $from_name <$from_email>","Reply-To: noreply@{$_SERVER['HTTP_HOST']}"];
-                    if(wp_mail($sub->email,$subject,$html,$hdrs,$files)) $sent++;
-                }
-                $dfem_sending = false;
-                $wpdb->insert($wpdb->prefix.'dfem_campaigns',['subject'=>$subject,'body'=>$body,'group_id'=>$group_id,'status'=>'sent','sent_to'=>$sent,'sent_at'=>current_time('mysql')],['%s','%s','%d','%s','%d','%s']);
-                $msg="<div class='dfem-alert dfem-alert-success'>✅ Sent to <strong>$sent</strong> subscribers!</div>";
-                $attachments=[];
+                $track = dfem_is_premium() && !empty($_POST['tracking_enabled']) ? 1 : 0;
+                $wpdb->insert($wpdb->prefix.'dfem_campaigns',['subject'=>$subject,'body'=>$body,'group_id'=>$group_id,'status'=>'draft','tracking_enabled'=>$track],['%s','%s','%d','%s','%d']);
+                $new_id = $wpdb->insert_id;
+                $sent   = dfem_dispatch_campaign($new_id);
+                $msg = $sent !== false
+                    ? "<div class='dfem-alert dfem-alert-success'>✅ Campaign sent to <strong>$sent</strong> subscribers! <a href='?page=dfem-campaigns'>View campaigns →</a></div>"
+                    : "<div class='dfem-alert dfem-alert-error'>❌ Could not send. Check your SMTP settings.</div>";
+                $attachments = [];
             }
         }
         $attachments = get_transient($attach_key) ?: [];
@@ -1269,9 +1684,43 @@ function dfem_page_new_campaign() {
             </div>
 
             <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:20px">
-                <button type="submit" name="dfem_action" value="preview" formnovalidate class="dfem-btn dfem-btn-secondary">👁️ Preview</button>
+                <!-- PREMIUM: Open & Click Tracking Toggle -->
+                <?php if(dfem_is_premium()): ?>
+                <div style="width:100%;background:#f4fdf9;border:2px solid #00A878;border-radius:10px;padding:14px 18px;">
+                    <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-weight:600;color:#005c34;">
+                        <input type="checkbox" name="tracking_enabled" value="1" style="width:auto;transform:scale(1.3);">
+                        📊 Enable Open & Click Tracking for this campaign
+                    </label>
+                    <small style="color:var(--df-muted);margin-top:4px;display:block;">Tracks who opens your email and which links they click. View results under 📊 Tracking in the menu.</small>
+                </div>
+                <?php else: ?>
+                <div style="width:100%;background:#fffbeb;border:1px dashed #f59e0b;border-radius:8px;padding:12px 16px;font-size:.88em;color:#78350f;">
+                    🔒 <strong>Open & Click Tracking</strong> is a Premium feature. <a href="?page=dfem-settings&tab=license" style="color:#d97706;font-weight:600;">Activate a license key to unlock →</a>
+                </div>
+                <?php endif; ?>
+            </div>
+
+            <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:16px;align-items:flex-start;">
+                <button type="submit" name="dfem_action" value="preview"    formnovalidate class="dfem-btn dfem-btn-secondary">👁️ Preview</button>
                 <button type="submit" name="dfem_action" value="save_draft" formnovalidate class="dfem-btn dfem-btn-secondary">💾 Save Draft</button>
-                <button type="submit" name="dfem_action" value="send" class="dfem-btn dfem-btn-success" onclick="return confirm('Send this campaign to the selected audience now?')">📤 Send Campaign</button>
+                <button type="submit" name="dfem_action" value="send"       class="dfem-btn dfem-btn-success" onclick="return confirm('Send this campaign to the selected audience now?')">📤 Send Now</button>
+
+                <!-- PREMIUM: Schedule for Later -->
+                <?php if(dfem_is_premium()): ?>
+                <div class="dfem-schedule-box" style="flex:1;min-width:280px;">
+                    <strong style="color:#92400e;display:block;margin-bottom:10px;">📅 Schedule for Later</strong>
+                    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+                        <input type="datetime-local" name="scheduled_at" min="<?php echo date('Y-m-d\TH:i'); ?>" style="padding:9px 12px;border:2px solid #f59e0b;border-radius:8px;font-size:.9em;flex:1;min-width:200px;">
+                        <button type="submit" name="dfem_action" value="schedule" formnovalidate class="dfem-btn dfem-btn-warning" onclick="return confirm('Schedule this campaign?')">📅 Schedule</button>
+                    </div>
+                    <small style="color:#92400e;margin-top:6px;display:block;">Sends automatically at the chosen date and time via WP Cron.</small>
+                </div>
+                <?php else: ?>
+                <div style="background:#fffbeb;border:1px dashed #f59e0b;border-radius:8px;padding:12px 16px;font-size:.88em;color:#78350f;flex:1;min-width:200px;">
+                    🔒 <strong>Campaign Scheduling</strong> is a Premium feature.<br>
+                    <a href="?page=dfem-settings&tab=license" style="color:#d97706;font-weight:600;">Activate a license key to unlock →</a>
+                </div>
+                <?php endif; ?>
             </div>
         </form>
     </div>
@@ -1279,221 +1728,366 @@ function dfem_page_new_campaign() {
 }
 
 /* =========================================================
-   SETTINGS  (with tabbed interface + Changelog tab)
+   TRACKING PAGE (PREMIUM)
+   ========================================================= */
+function dfem_page_tracking() {
+    global $wpdb;
+    dfem_header('📊 Tracking');
+
+    if (!dfem_is_premium()) { ?>
+        <div class="dfem-card">
+            <h2>📊 Open & Click Tracking</h2>
+            <?php
+            echo '<div style="text-align:center;padding:40px 20px">';
+            echo '<div style="font-size:3em;margin-bottom:16px">🔒</div>';
+            echo '<h3 style="color:var(--df-text);margin:0 0 8px">Open & Click Tracking — Premium Feature</h3>';
+            echo '<p style="color:var(--df-muted);max-width:480px;margin:0 auto 20px">See exactly who opened your emails and which links they clicked. Upgrade to DadsFam Email Marketing Premium to unlock full tracking analytics.</p>';
+            echo '<a href="?page=dfem-settings&tab=license" class="dfem-btn dfem-btn-primary">⭐ Activate Premium License →</a>';
+            echo '</div>';
+            ?>
+        </div>
+    <?php dfem_footer(); return; }
+
+    $camp_id   = isset($_GET['camp']) ? (int)$_GET['camp'] : 0;
+    $campaigns = $wpdb->get_results("SELECT id,subject,sent_to,opens,clicks,sent_at FROM {$wpdb->prefix}dfem_campaigns WHERE status='sent' ORDER BY sent_at DESC LIMIT 50");
+    ?>
+    <div class="dfem-stats">
+        <?php
+        $total_opens  = (int)$wpdb->get_var("SELECT SUM(opens) FROM {$wpdb->prefix}dfem_campaigns WHERE status='sent'");
+        $total_clicks = (int)$wpdb->get_var("SELECT SUM(clicks) FROM {$wpdb->prefix}dfem_campaigns WHERE status='sent'");
+        $total_sent   = (int)$wpdb->get_var("SELECT SUM(sent_to) FROM {$wpdb->prefix}dfem_campaigns WHERE status='sent'");
+        $open_rate    = $total_sent > 0 ? round(($total_opens/$total_sent)*100,1) : 0;
+        $click_rate   = $total_sent > 0 ? round(($total_clicks/$total_sent)*100,1) : 0;
+        ?>
+        <div class="dfem-stat"><div class="n"><?php echo $total_opens; ?></div><div class="l">👁️ Total Opens</div></div>
+        <div class="dfem-stat" style="border-top-color:#00A878"><div class="n" style="color:#00A878"><?php echo $open_rate; ?>%</div><div class="l">📈 Avg Open Rate</div></div>
+        <div class="dfem-stat" style="border-top-color:#7b2cbf"><div class="n" style="color:#7b2cbf"><?php echo $total_clicks; ?></div><div class="l">🔗 Total Clicks</div></div>
+        <div class="dfem-stat" style="border-top-color:#f59e0b"><div class="n" style="color:#f59e0b"><?php echo $click_rate; ?>%</div><div class="l">🎯 Avg Click Rate</div></div>
+    </div>
+
+    <div class="dfem-card">
+        <h2>📋 Campaign Performance</h2>
+        <?php if($campaigns): ?>
+        <div class="dfem-table-wrap"><table class="dfem-table">
+            <thead><tr><th>Campaign</th><th>Sent To</th><th>Opens</th><th>Open Rate</th><th>Clicks</th><th>Click Rate</th><th>Sent</th><th></th></tr></thead>
+            <tbody><?php foreach($campaigns as $c):
+                $or = $c->sent_to > 0 ? round(($c->opens/$c->sent_to)*100,1) : 0;
+                $cr = $c->sent_to > 0 ? round(($c->clicks/$c->sent_to)*100,1) : 0;
+            ?>
+            <tr>
+                <td><strong><?php echo esc_html($c->subject); ?></strong></td>
+                <td><?php echo (int)$c->sent_to; ?></td>
+                <td>
+                    <strong><?php echo (int)$c->opens; ?></strong>
+                    <div class="dfem-progress" style="width:80px"><div class="dfem-progress-bar" style="width:<?php echo min(100,$or); ?>%"></div></div>
+                </td>
+                <td><?php echo $or; ?>%</td>
+                <td>
+                    <strong><?php echo (int)$c->clicks; ?></strong>
+                    <div class="dfem-progress" style="width:80px"><div class="dfem-progress-bar" style="width:<?php echo min(100,$cr*2); ?>%;background:linear-gradient(90deg,#7b2cbf,#5b21b6)"></div></div>
+                </td>
+                <td><?php echo $cr; ?>%</td>
+                <td style="font-size:.83em;color:var(--df-muted)"><?php echo $c->sent_at ? date('d M Y',strtotime($c->sent_at)) : '—'; ?></td>
+                <td><a href="?page=dfem-tracking&camp=<?php echo $c->id; ?>" class="dfem-btn dfem-btn-secondary dfem-btn-sm">🔍 Details</a></td>
+            </tr>
+            <?php endforeach; ?></tbody>
+        </table></div>
+        <?php else: ?><p style="color:var(--df-muted)">No sent campaigns yet. Enable tracking when composing your next campaign.</p><?php endif; ?>
+    </div>
+
+    <?php if($camp_id):
+        $camp    = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}dfem_campaigns WHERE id=%d", $camp_id));
+        $opens   = $wpdb->get_results($wpdb->prepare("SELECT email,ip_address,created_at FROM {$wpdb->prefix}dfem_tracking WHERE campaign_id=%d AND type='open' ORDER BY created_at DESC LIMIT 100", $camp_id));
+        $clicks  = $wpdb->get_results($wpdb->prepare("SELECT email,url,ip_address,created_at FROM {$wpdb->prefix}dfem_tracking WHERE campaign_id=%d AND type='click' ORDER BY created_at DESC LIMIT 100", $camp_id));
+        if($camp): ?>
+    <div class="dfem-card">
+        <h2>🔍 Detail: <?php echo esc_html($camp->subject); ?></h2>
+        <div class="dfem-grid2">
+            <div>
+                <h3 style="margin:0 0 12px;color:var(--df-text);font-size:1em">👁️ Opens (<?php echo count($opens); ?>)</h3>
+                <?php if($opens): foreach($opens as $o): ?>
+                <div class="dfem-tracking-row">
+                    <span><?php echo esc_html($o->email); ?></span>
+                    <span style="color:var(--df-muted);font-size:.8em"><?php echo $o->ip_address; ?></span>
+                    <span style="color:var(--df-muted);font-size:.8em"><?php echo date('d M H:i',strtotime($o->created_at)); ?></span>
+                </div>
+                <?php endforeach; else: ?><p style="color:var(--df-muted);font-size:.9em">No opens tracked yet.</p><?php endif; ?>
+            </div>
+            <div>
+                <h3 style="margin:0 0 12px;color:var(--df-text);font-size:1em">🔗 Clicks (<?php echo count($clicks); ?>)</h3>
+                <?php if($clicks): foreach($clicks as $cl): ?>
+                <div class="dfem-tracking-row">
+                    <span><?php echo esc_html($cl->email); ?></span>
+                    <span style="font-size:.78em;color:var(--df-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px" title="<?php echo esc_attr($cl->url); ?>"><?php echo esc_html(parse_url($cl->url,PHP_URL_HOST).'/...'); ?></span>
+                    <span style="color:var(--df-muted);font-size:.8em"><?php echo date('d M H:i',strtotime($cl->created_at)); ?></span>
+                </div>
+                <?php endforeach; else: ?><p style="color:var(--df-muted);font-size:.9em">No clicks tracked yet.</p><?php endif; ?>
+            </div>
+        </div>
+    </div>
+    <?php endif; endif; ?>
+    <?php dfem_footer();
+}
+
+/* =========================================================
+   SETTINGS — Completely restructured to fix "Link Expired" bug.
+   Root cause: nested <form> tags (License form inside main form).
+   Fix: URL-based tabs render ONLY the active tab — one form per
+   page load, no nesting possible, always fresh nonce.
    ========================================================= */
 function dfem_page_settings() {
-    $msg      = '';
-    $active_tab = isset($_GET['tab']) ? sanitize_text_field($_GET['tab']) : 'general';
+    global $wpdb;
+    $msg        = '';
+    $active_tab = sanitize_text_field($_GET['tab'] ?? 'general');
+    $settings   = get_option('dfem_settings', []);
 
-    if ( isset($_POST['dfem_save']) && check_admin_referer('dfem_settings') ) {
+    // ---- Handle General / Branding save ----
+    if ( isset($_POST['dfem_save']) && isset($_POST['_wpnonce']) && wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_wpnonce'])), 'dfem_settings') ) {
         $social_links = [];
-        if ( !empty($_POST['social_label']) ) {
-            foreach($_POST['social_label'] as $i=>$label){
+        if (!empty($_POST['social_label'])) {
+            foreach($_POST['social_label'] as $i => $label) {
                 $label = sanitize_text_field($label);
-                $url   = esc_url_raw($_POST['social_url'][$i]??'');
-                if($label&&$url) $social_links[]=compact('label','url');
+                $url   = esc_url_raw($_POST['social_url'][$i] ?? '');
+                if ($label && $url) $social_links[] = compact('label','url');
             }
         }
         $settings = [
-            'from_name'     => sanitize_text_field($_POST['from_name']),
-            'from_email'    => sanitize_email($_POST['from_email']),
-            'footer_text'   => sanitize_textarea_field($_POST['footer_text']),
-            'logo_media_id' => (int)($_POST['logo_media_id']??0),
-            'primary_color' => sanitize_hex_color($_POST['primary_color'])?:'#0066cc',
+            'from_name'     => sanitize_text_field($_POST['from_name'] ?? ''),
+            'from_email'    => sanitize_email($_POST['from_email'] ?? ''),
+            'footer_text'   => sanitize_textarea_field($_POST['footer_text'] ?? ''),
+            'logo_media_id' => (int)($_POST['logo_media_id'] ?? 0),
+            'primary_color' => sanitize_hex_color($_POST['primary_color'] ?? '') ?: '#0066cc',
             'social_links'  => $social_links,
         ];
-        update_option('dfem_settings',$settings);
-        $msg='<div class="dfem-alert dfem-alert-success">✅ Settings saved!</div>';
-        $active_tab = 'general'; // stay on general after save
+        update_option('dfem_settings', $settings);
+        $active_tab = sanitize_text_field($_POST['current_tab'] ?? 'general');
+        $msg = '<div class="dfem-alert dfem-alert-success">✅ Settings saved!</div>';
     }
 
-    $settings      = get_option('dfem_settings',[]);
-    $social_links  = $settings['social_links'] ?? [];
-    $logo_media_id = (int)($settings['logo_media_id']??0);
+    // ---- Handle License save ----
+    if ( isset($_POST['dfem_save_license']) && isset($_POST['_wpnonce']) && wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_wpnonce'])), 'dfem_license') ) {
+        $key = sanitize_text_field($_POST['license_key'] ?? '');
+        update_option('dfem_license_key', $key);
+        delete_transient('dfem_license_status');
+        if (!empty($key)) {
+            // Schedule background check — don't block page load
+            wp_schedule_single_event(time() + 2, 'dfem_bg_license_check');
+            $msg = '<div class="dfem-alert dfem-alert-success">✅ License key saved! Verification running in background — refresh in ~30 seconds to see your Premium status.</div>';
+        } else {
+            delete_option('dfem_license_status_cache');
+            $msg = '<div class="dfem-alert dfem-alert-info">ℹ️ License key removed.</div>';
+        }
+        $active_tab = 'license';
+    }
+
+    // ---- Handle Force Verify ----
+    if ( isset($_POST['dfem_force_verify']) && isset($_POST['_wpnonce']) && wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_wpnonce'])), 'dfem_license') ) {
+        $key = sanitize_text_field($_POST['license_key'] ?? '');
+        delete_transient('dfem_license_status');
+        if (!empty($key)) {
+            $valid = dfem_verify_license($key);
+            $msg = $valid
+                ? '<div class="dfem-alert dfem-alert-success">✅ License verified! Premium features are now active.</div>'
+                : '<div class="dfem-alert dfem-alert-error">❌ Key could not be verified. Check it is Active in your License Manager and the site URL matches.</div>';
+        }
+        $active_tab = 'license';
+    }
+
+    $social_links  = $settings['social_links']  ?? [];
+    $logo_media_id = (int)($settings['logo_media_id'] ?? 0);
     $logo_url      = $logo_media_id ? wp_get_attachment_url($logo_media_id) : '';
     $unsub_id      = get_option('dfem_unsub_page_id');
     $unsub_url     = $unsub_id ? get_permalink($unsub_id) : '';
     $changelog     = dfem_get_changelog();
+    $license_key   = dfem_get_license_key();
+    $is_premium    = dfem_is_premium();
+    $valid_tabs    = ['general','branding','license','export','unsubscribe','changelog'];
+    if (!in_array($active_tab, $valid_tabs)) $active_tab = 'general';
 
     dfem_header('Settings'); echo $msg; ?>
 
-    <!-- TABS -->
+    <!-- TAB NAVIGATION -->
     <div style="margin-bottom:0;">
         <div class="dfem-tabs">
-            <a href="?page=dfem-settings&tab=general"   class="dfem-tab <?php echo $active_tab==='general'?'active':''; ?>">⚙️ General</a>
-            <a href="?page=dfem-settings&tab=branding"  class="dfem-tab <?php echo $active_tab==='branding'?'active':''; ?>">🎨 Branding</a>
-            <a href="?page=dfem-settings&tab=unsubscribe" class="dfem-tab <?php echo $active_tab==='unsubscribe'?'active':''; ?>">🔗 Unsubscribe</a>
-            <a href="?page=dfem-settings&tab=changelog" class="dfem-tab <?php echo $active_tab==='changelog'?'active':''; ?>">📋 Changelog</a>
+            <a href="?page=dfem-settings&tab=general"     class="dfem-tab <?php echo $active_tab==='general'     ?'active':''; ?>">⚙️ General</a>
+            <a href="?page=dfem-settings&tab=branding"    class="dfem-tab <?php echo $active_tab==='branding'    ?'active':''; ?>">🎨 Branding</a>
+            <a href="?page=dfem-settings&tab=license"     class="dfem-tab <?php echo $active_tab==='license'     ?'active':''; ?>">⭐ License<?php if($is_premium): ?> <span style="background:#d4f7ed;color:#005c34;padding:2px 8px;border-radius:20px;font-size:.75em;font-weight:700;margin-left:4px;">Active</span><?php endif; ?></a>
+            <a href="?page=dfem-settings&tab=export"      class="dfem-tab <?php echo $active_tab==='export'      ?'active':''; ?>">📥 Export<?php if(!$is_premium): ?> 🔒<?php endif; ?></a>
+            <a href="?page=dfem-settings&tab=unsubscribe" class="dfem-tab <?php echo $active_tab==='unsubscribe' ?'active':''; ?>">🔗 Unsubscribe</a>
+            <a href="?page=dfem-settings&tab=changelog"   class="dfem-tab <?php echo $active_tab==='changelog'   ?'active':''; ?>">📋 Changelog</a>
         </div>
     </div>
 
-    <?php if($active_tab !== 'changelog'): ?>
+    <!-- GENERAL TAB — own form, no nesting possible -->
+    <?php if($active_tab === 'general'): ?>
     <form method="post">
         <?php wp_nonce_field('dfem_settings'); ?>
-    <?php endif; ?>
-
-        <!-- GENERAL TAB -->
-        <div class="dfem-tab-panel <?php echo $active_tab==='general'?'active':''; ?>" id="tab-general" style="display:<?php echo $active_tab==='general'?'block':'none'; ?>;">
-            <div class="dfem-card" style="border-radius:0 12px 12px 12px;">
-                <h2>📧 Sender Settings</h2>
-                <div class="dfem-grid2">
-                    <div class="dfem-form-row"><label>From Name</label><input type="text" name="from_name" value="<?php echo esc_attr($settings['from_name']??get_bloginfo('name')); ?>"></div>
-                    <div class="dfem-form-row"><label>From Email</label><input type="text" name="from_email" value="<?php echo esc_attr($settings['from_email']??get_bloginfo('admin_email')); ?>"></div>
-                </div>
-            </div>
-            <div class="dfem-card">
-                <h2>🌐 Social / Footer Links <small style="font-weight:400;color:var(--df-muted);font-size:.82em">Custom label + URL — shown as hyperlinks in every email footer.</small></h2>
-                <div id="dfem-socials-wrap">
-                    <?php foreach($social_links as $sl): ?>
-                    <div class="social-row">
-                        <input type="text" name="social_label[]" value="<?php echo esc_attr($sl['label']); ?>" placeholder="Label (e.g. Facebook)" style="max-width:200px;">
-                        <input type="url" name="social_url[]" value="<?php echo esc_attr($sl['url']); ?>" placeholder="https://...">
-                        <button type="button" class="dfem-btn dfem-btn-danger dfem-btn-sm" onclick="this.closest('.social-row').remove()">✕ Remove</button>
-                    </div>
-                    <?php endforeach; ?>
-                </div>
-                <button type="button" class="dfem-btn dfem-btn-secondary" style="margin-top:10px" onclick="dfemAddSocial()">+ Add Link</button>
-            </div>
-            <div style="margin-bottom:30px"><button type="submit" name="dfem_save" value="1" class="dfem-btn dfem-btn-primary">💾 Save Settings</button></div>
-        </div>
-
-        <!-- BRANDING TAB -->
-        <div class="dfem-tab-panel <?php echo $active_tab==='branding'?'active':''; ?>" id="tab-branding" style="display:<?php echo $active_tab==='branding'?'block':'none'; ?>;">
-            <div class="dfem-card" style="border-radius:0 12px 12px 12px;">
-                <h2>🎨 Email Template Branding</h2>
-                <div class="dfem-form-row">
-                    <label>Logo Image</label>
-                    <div class="dfem-logo-wrap">
-                        <?php if($logo_url): ?>
-                        <img id="dfem-logo-preview" src="<?php echo esc_url($logo_url); ?>" class="dfem-logo-preview" alt="Logo">
-                        <?php else: ?>
-                        <div id="dfem-logo-placeholder" class="dfem-logo-placeholder">No logo<br>selected</div>
-                        <img id="dfem-logo-preview" src="" class="dfem-logo-preview" style="display:none" alt="Logo">
-                        <?php endif; ?>
-                        <div style="display:flex;flex-direction:column;gap:8px;">
-                            <button type="button" class="dfem-btn dfem-btn-primary" id="dfem-upload-logo">📁 Choose from Media Library</button>
-                            <?php if($logo_url): ?>
-                            <button type="button" class="dfem-btn dfem-btn-danger dfem-btn-sm" id="dfem-remove-logo">✕ Remove Logo</button>
-                            <?php endif; ?>
-                            <small style="color:var(--df-muted)">Appears in the email header. Leave empty to show site name as text.</small>
-                        </div>
-                    </div>
-                    <input type="hidden" name="logo_media_id" id="dfem-logo-media-id" value="<?php echo $logo_media_id; ?>">
-                </div>
-                <div class="dfem-grid2">
-                    <div class="dfem-form-row">
-                        <label>Primary Brand Colour</label>
-                        <input type="color" name="primary_color" value="<?php echo esc_attr($settings['primary_color']??'#0066cc'); ?>">
-                    </div>
-                </div>
-                <div class="dfem-form-row">
-                    <label>Email Footer Text</label>
-                    <textarea name="footer_text" rows="2"><?php echo esc_textarea($settings['footer_text']??''); ?></textarea>
-                </div>
-            </div>
-            <div style="margin-bottom:30px"><button type="submit" name="dfem_save" value="1" class="dfem-btn dfem-btn-primary">💾 Save Settings</button></div>
-        </div>
-
-        <!-- UNSUBSCRIBE TAB -->
-        <div class="dfem-tab-panel <?php echo $active_tab==='unsubscribe'?'active':''; ?>" id="tab-unsubscribe" style="display:<?php echo $active_tab==='unsubscribe'?'block':'none'; ?>;">
-            <div class="dfem-card" style="border-radius:0 12px 12px 12px;">
-                <h2>🔗 Unsubscribe Page</h2>
-                <?php if($unsub_url): ?>
-                <div class="dfem-alert dfem-alert-info">✅ Unsubscribe page live at: <a href="<?php echo esc_url($unsub_url); ?>" target="_blank"><?php echo esc_url($unsub_url); ?></a></div>
-                <?php else: ?>
-                <div class="dfem-alert dfem-alert-error">⚠️ Page missing. Deactivate and reactivate the plugin to recreate it.</div>
-                <?php endif; ?>
-                <p style="color:var(--df-muted)">The unsubscribe link is automatically added to the footer of every campaign email. Subscribers click it to opt out, and their status is updated immediately.</p>
-                <p style="color:var(--df-muted)">The shortcode used on that page is: <code>[dfem_unsubscribe]</code></p>
+        <input type="hidden" name="current_tab" value="general">
+        <div class="dfem-card" style="border-radius:0 12px 12px 12px;">
+            <h2>📧 Sender Settings</h2>
+            <div class="dfem-grid2">
+                <div class="dfem-form-row"><label>From Name</label><input type="text" name="from_name" value="<?php echo esc_attr($settings['from_name'] ?? get_bloginfo('name')); ?>"></div>
+                <div class="dfem-form-row"><label>From Email</label><input type="text" name="from_email" value="<?php echo esc_attr($settings['from_email'] ?? get_bloginfo('admin_email')); ?>"></div>
             </div>
         </div>
-
-    <?php if($active_tab !== 'changelog'): ?>
-    </form>
-    <?php endif; ?>
-
-        <!-- CHANGELOG TAB -->
-        <div class="dfem-tab-panel <?php echo $active_tab==='changelog'?'active':''; ?>" id="tab-changelog" style="display:<?php echo $active_tab==='changelog'?'block':'none'; ?>;">
-            <div class="dfem-card" style="border-radius:0 12px 12px 12px;">
-                <h2>📋 Plugin Changelog</h2>
-                <p style="color:var(--df-muted);margin:-10px 0 20px;font-size:.92em;">A full history of updates and improvements to DadsFam Email Marketing.</p>
-                <?php foreach($changelog as $entry):
-                    $label_map = ['new'=>'🆕 New Features','major'=>'🚀 Major Release','fix'=>'🛠 Bug Fixes & Improvements','feature'=>'✅ New Features','initial'=>'🎉 Initial Release'];
-                    $label_txt = $label_map[$entry['label']] ?? ucfirst($entry['label']);
-                    $current   = $entry['version'] === DFEM_VERSION;
-                ?>
-                <div class="dfem-cl-entry <?php echo esc_attr($entry['label']); ?>">
-                    <div class="dfem-cl-version">
-                        <strong>v<?php echo esc_html($entry['version']); ?></strong>
-                        <?php if($current): ?><span class="dfem-badge-green">✅ Current</span><?php endif; ?>
-                        <span class="dfem-badge-gray"><?php echo esc_html($label_txt); ?></span>
-                        <span class="date">Released <?php echo esc_html(date('d M Y', strtotime($entry['date']))); ?></span>
-                    </div>
-                    <ul class="dfem-cl-changes">
-                        <?php foreach($entry['changes'] as $change): ?>
-                        <li><?php echo esc_html($change); ?></li>
-                        <?php endforeach; ?>
-                    </ul>
+        <div class="dfem-card">
+            <h2>🌐 Social / Footer Links <small style="font-weight:400;color:var(--df-muted);font-size:.82em">Shown as hyperlinks in every email footer.</small></h2>
+            <div id="dfem-socials-wrap">
+                <?php foreach($social_links as $sl): ?>
+                <div class="social-row">
+                    <input type="text" name="social_label[]" value="<?php echo esc_attr($sl['label']); ?>" placeholder="Label (e.g. Facebook)" style="max-width:200px;">
+                    <input type="url"  name="social_url[]"   value="<?php echo esc_attr($sl['url']); ?>"   placeholder="https://...">
+                    <button type="button" class="dfem-btn dfem-btn-danger dfem-btn-sm" onclick="this.closest('.social-row').remove()">✕ Remove</button>
                 </div>
                 <?php endforeach; ?>
             </div>
+            <button type="button" class="dfem-btn dfem-btn-secondary" style="margin-top:10px" onclick="dfemAddSocial()">+ Add Link</button>
         </div>
+        <div style="margin-bottom:30px"><button type="submit" name="dfem_save" value="1" class="dfem-btn dfem-btn-primary">💾 Save Settings</button></div>
+    </form>
 
-    <script>
-    function dfemAddSocial(){
-        var w=document.getElementById('dfem-socials-wrap');
-        if(!w) return;
-        var r=document.createElement('div');
-        r.className='social-row';
-        r.innerHTML='<input type="text" name="social_label[]" placeholder="Label (e.g. Instagram)" style="max-width:200px;">'
-                   +'<input type="url" name="social_url[]" placeholder="https://...">'
-                   +'<button type="button" class="dfem-btn dfem-btn-danger dfem-btn-sm" onclick="this.closest(\'.social-row\').remove()">✕ Remove</button>';
-        w.appendChild(r);
-    }
-    var dfemMediaFrame;
-    var uploadBtn = document.getElementById('dfem-upload-logo');
-    if(uploadBtn){
-        uploadBtn.addEventListener('click',function(e){
-            e.preventDefault();
-            if(dfemMediaFrame){dfemMediaFrame.open();return;}
-            dfemMediaFrame=wp.media({title:'Select Logo Image',button:{text:'Use This Image'},multiple:false,library:{type:'image'}});
-            dfemMediaFrame.on('select',function(){
-                var att=dfemMediaFrame.state().get('selection').first().toJSON();
-                document.getElementById('dfem-logo-media-id').value=att.id;
-                var prev=document.getElementById('dfem-logo-preview');
-                var ph=document.getElementById('dfem-logo-placeholder');
-                prev.src=att.url;prev.style.display='block';
-                if(ph) ph.style.display='none';
-                if(!document.getElementById('dfem-remove-logo')){
-                    var btn=document.createElement('button');
-                    btn.type='button';btn.className='dfem-btn dfem-btn-danger dfem-btn-sm';
-                    btn.id='dfem-remove-logo';btn.textContent='✕ Remove Logo';
-                    btn.addEventListener('click',dfemRemoveLogo);
-                    uploadBtn.after(btn);
-                }
-            });
-            dfemMediaFrame.open();
-        });
-    }
-    function dfemRemoveLogo(){
-        document.getElementById('dfem-logo-media-id').value='0';
-        var prev=document.getElementById('dfem-logo-preview');
-        var ph=document.getElementById('dfem-logo-placeholder');
-        prev.src='';prev.style.display='none';
-        if(ph) ph.style.display='flex';
-        var rb=document.getElementById('dfem-remove-logo');
-        if(rb) rb.remove();
-    }
-    var rmBtn=document.getElementById('dfem-remove-logo');
-    if(rmBtn) rmBtn.addEventListener('click',dfemRemoveLogo);
-    </script>
-    <?php dfem_footer();
+    <!-- BRANDING TAB -->
+    <?php elseif($active_tab === 'branding'): ?>
+    <form method="post">
+        <?php wp_nonce_field('dfem_settings'); ?>
+        <input type="hidden" name="current_tab" value="branding">
+        <div class="dfem-card" style="border-radius:0 12px 12px 12px;">
+            <h2>🎨 Email Template Branding</h2>
+            <div class="dfem-form-row">
+                <label>Logo Image</label>
+                <div class="dfem-logo-wrap">
+                    <?php if($logo_url): ?><img id="dfem-logo-preview" src="<?php echo esc_url($logo_url); ?>" class="dfem-logo-preview" alt="Logo">
+                    <?php else: ?><div id="dfem-logo-placeholder" class="dfem-logo-placeholder">No logo<br>selected</div><img id="dfem-logo-preview" src="" class="dfem-logo-preview" style="display:none" alt="Logo"><?php endif; ?>
+                    <div style="display:flex;flex-direction:column;gap:8px;">
+                        <button type="button" class="dfem-btn dfem-btn-primary" id="dfem-upload-logo">📁 Choose from Media Library</button>
+                        <?php if($logo_url): ?><button type="button" class="dfem-btn dfem-btn-danger dfem-btn-sm" id="dfem-remove-logo">✕ Remove Logo</button><?php endif; ?>
+                        <small style="color:var(--df-muted)">Appears in the email header.</small>
+                    </div>
+                </div>
+                <input type="hidden" name="logo_media_id" id="dfem-logo-media-id" value="<?php echo $logo_media_id; ?>">
+            </div>
+            <div class="dfem-grid2"><div class="dfem-form-row"><label>Primary Brand Colour</label><input type="color" name="primary_color" value="<?php echo esc_attr($settings['primary_color'] ?? '#0066cc'); ?>"></div></div>
+            <div class="dfem-form-row"><label>Email Footer Text</label><textarea name="footer_text" rows="2"><?php echo esc_textarea($settings['footer_text'] ?? ''); ?></textarea></div>
+        </div>
+        <div style="margin-bottom:30px"><button type="submit" name="dfem_save" value="1" class="dfem-btn dfem-btn-primary">💾 Save Branding</button></div>
+    </form>
+
+    <!-- LICENSE TAB — its own separate form, never nested -->
+    <?php elseif($active_tab === 'license'): ?>
+    <div class="dfem-card" style="border-radius:0 12px 12px 12px;">
+        <h2>⭐ DadsFam Premium License</h2>
+        <?php if($is_premium): ?>
+        <div style="padding:14px 18px;border-radius:10px;margin-bottom:18px;font-weight:600;background:#d4f7ed;color:#005c34;border:2px solid #00A878;">⭐ Premium License Active — your site has full premium access.</div>
+        <?php else: ?>
+        <div style="padding:14px 18px;border-radius:10px;margin-bottom:18px;font-weight:600;background:#f0f4f8;color:var(--df-muted);border:2px solid var(--df-border);">🔒 No active premium license. Generate a key in your License Manager, then enter it below.</div>
+        <?php endif; ?>
+        <p style="color:var(--df-muted);margin:0 0 20px;font-size:.93em">Generate a key in <strong>DF Licenses → Add New Key</strong>, paste it below, then click <strong>Activate</strong>. The key verifies in the background — refresh the page after ~30 seconds to see your Premium status update.</p>
+        <form method="post">
+            <?php wp_nonce_field('dfem_license'); ?>
+            <div class="dfem-form-row" style="max-width:520px;">
+                <label>License Key</label>
+                <div style="display:flex;gap:10px;">
+                    <input type="text" name="license_key" value="<?php echo esc_attr($license_key); ?>" placeholder="DFEM-XXXX-XXXX-XXXX-XXXX" style="font-family:monospace;letter-spacing:1px;">
+                    <button type="submit" name="dfem_save_license" value="1" style="display:inline-flex;align-items:center;gap:5px;padding:9px 18px;border-radius:8px;font-weight:700;font-size:.88em;background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;border:none;cursor:pointer;white-space:nowrap;">⭐ Save Key</button>
+                </div>
+                <?php if($license_key && !$is_premium): ?><small style="color:var(--df-muted);margin-top:6px;display:block;">🕐 Key saved — background verification pending. Refresh in ~30 seconds. Or use "Force Check" below.</small><?php endif; ?>
+            </div>
+        </form>
+        <?php if($license_key): ?>
+        <form method="post" style="margin-top:10px">
+            <?php wp_nonce_field('dfem_license'); ?>
+            <input type="hidden" name="license_key" value="<?php echo esc_attr($license_key); ?>">
+            <button type="submit" name="dfem_force_verify" value="1" class="dfem-btn dfem-btn-secondary dfem-btn-sm">🔄 Force Check Now</button>
+            <small style="color:var(--df-muted);margin-left:8px">Runs verification immediately and refreshes your status.</small>
+        </form>
+        <?php endif; ?>
+        <hr style="border:none;border-top:2px solid var(--df-border);margin:24px 0">
+        <h3 style="margin:0 0 14px;color:var(--df-text)">🚀 Premium Features</h3>
+        <div class="dfem-grid2">
+            <div style="padding:14px;background:#f8faff;border-radius:10px;border-left:3px solid var(--df-blue)"><strong>📅 Campaign Scheduling</strong><p style="color:var(--df-muted);font-size:.88em;margin:4px 0 0">Schedule campaigns to auto-send at a future date/time.</p></div>
+            <div style="padding:14px;background:#f8faff;border-radius:10px;border-left:3px solid var(--df-green)"><strong>📊 Open & Click Tracking</strong><p style="color:var(--df-muted);font-size:.88em;margin:4px 0 0">See who opened your emails and which links they clicked.</p></div>
+            <div style="padding:14px;background:#f8faff;border-radius:10px;border-left:3px solid #7b2cbf"><strong>📥 CSV/Excel Export</strong><p style="color:var(--df-muted);font-size:.88em;margin:4px 0 0">Export your full subscriber list to a formatted Excel file.</p></div>
+            <div style="padding:14px;background:#f8faff;border-radius:10px;border-left:3px solid #f59e0b"><strong>🤖 More Coming Soon</strong><p style="color:var(--df-muted);font-size:.88em;margin:4px 0 0">Automations, sequences, advanced analytics — in development.</p></div>
+        </div>
+    </div>
+
+    <!-- EXPORT TAB (PREMIUM) -->
+    <?php elseif($active_tab === 'export'): ?>
+    <div class="dfem-card" style="border-radius:0 12px 12px 12px;">
+        <h2>📥 Export Subscribers</h2>
+        <?php if(!$is_premium): ?>
+        <div style="text-align:center;padding:30px">
+            <div style="font-size:2.5em;margin-bottom:12px">🔒</div>
+            <h3 style="color:var(--df-text);margin:0 0 8px">CSV/Excel Export — Premium Feature</h3>
+            <p style="color:var(--df-muted);margin:0 0 18px">Upgrade to export your full subscriber list as a formatted Excel-compatible file.</p>
+            <a href="?page=dfem-settings&tab=license" class="dfem-btn dfem-btn-primary">⭐ Activate Premium License →</a>
+        </div>
+        <?php else:
+        $export_groups = $wpdb->get_results("SELECT * FROM {$wpdb->prefix}dfem_groups ORDER BY name");
+        $total_subs    = (int)$wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}dfem_subscribers"); ?>
+        <p style="color:var(--df-muted);margin:0 0 18px;font-size:.92em">Export your subscriber list to a CSV file formatted for Excel. Columns: First Name, Last Name, Email, Business Name, Group, Status, Date Added.</p>
+        <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+            <?php wp_nonce_field('dfem_export'); ?>
+            <input type="hidden" name="action" value="dfem_export_csv">
+            <div class="dfem-form-row" style="max-width:380px">
+                <label>Filter by Group <em style="font-weight:400;color:var(--df-muted)">(optional — leave blank for all)</em></label>
+                <select name="export_group_id" style="width:100%;padding:9px 13px;border:2px solid var(--df-border);border-radius:8px;font-size:.93em;">
+                    <option value="0">— All Subscribers (<?php echo $total_subs; ?>) —</option>
+                    <?php foreach($export_groups as $g):
+                        $cnt = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}dfem_subscribers WHERE group_id=%d",$g->id)); ?>
+                    <option value="<?php echo $g->id; ?>">📍 <?php echo esc_html($g->name); ?> (<?php echo $cnt; ?>)</option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div style="background:#f8faff;padding:14px;border-radius:8px;border:1px solid var(--df-border);margin-bottom:18px;font-size:.88em;color:var(--df-muted)">
+                📋 <strong style="color:var(--df-text)">Excel-compatible CSV format:</strong> First Name · Last Name · Email · Business Name · Group · Status · Date Added<br>
+                <span style="font-size:.85em">UTF-8 BOM encoded so Excel opens it correctly with proper character support.</span>
+            </div>
+            <button type="submit" name="dfem_export_csv" value="1" class="dfem-btn dfem-btn-success">📥 Download Excel/CSV Export</button>
+        </form>
+        <?php endif; ?>
+    </div>
+
+    <!-- UNSUBSCRIBE TAB -->
+    <?php elseif($active_tab === 'unsubscribe'): ?>
+    <div class="dfem-card" style="border-radius:0 12px 12px 12px;">
+        <h2>🔗 Unsubscribe Page</h2>
+        <?php if($unsub_url): ?>
+        <div class="dfem-alert dfem-alert-info">✅ Unsubscribe page live at: <a href="<?php echo esc_url($unsub_url); ?>" target="_blank"><?php echo esc_url($unsub_url); ?></a></div>
+        <?php else: ?>
+        <div class="dfem-alert dfem-alert-error">⚠️ Page missing. Deactivate and reactivate the plugin to recreate it.</div>
+        <?php endif; ?>
+        <p style="color:var(--df-muted)">The unsubscribe link is automatically added to every campaign email footer. Shortcode: <code>[dfem_unsubscribe]</code></p>
+    </div>
+
+    <!-- CHANGELOG TAB -->
+    <?php elseif($active_tab === 'changelog'): ?>
+    <div class="dfem-card" style="border-radius:0 12px 12px 12px;">
+        <h2>📋 Plugin Changelog</h2>
+        <p style="color:var(--df-muted);margin:-10px 0 20px;font-size:.92em">Full update history for DadsFam Email Marketing. Built by <a href="https://www.dadsfam.co.za" target="_blank" style="color:var(--df-blue)">DadsFam</a>.</p>
+        <?php foreach($changelog as $entry):
+            $label_map=['new'=>'🆕 New Features','major'=>'🚀 Major Release','fix'=>'🛠 Bug Fixes','feature'=>'✅ New Features','initial'=>'🎉 Initial Release'];
+            $current=$entry['version']===DFEM_VERSION; ?>
+        <div class="dfem-cl-entry <?php echo esc_attr($entry['label']); ?>">
+            <div class="dfem-cl-version">
+                <strong>v<?php echo esc_html($entry['version']); ?></strong>
+                <?php if($current): ?><span class="dfem-badge-green">✅ Current</span><?php endif; ?>
+                <span class="dfem-badge-gray"><?php echo esc_html($label_map[$entry['label']]??ucfirst($entry['label'])); ?></span>
+                <span class="date">Released <?php echo esc_html(date('d M Y',strtotime($entry['date']))); ?></span>
+            </div>
+            <ul class="dfem-cl-changes"><?php foreach($entry['changes'] as $chg): ?><li><?php echo esc_html($chg); ?></li><?php endforeach; ?></ul>
+        </div>
+        <?php endforeach; ?>
+    </div>
+    <?php endif; ?>
+    <?php dfem_footer(); ?>
+<?php
 }
 
 /* =========================================================
    EMAIL BUILDER
    ========================================================= */
-function dfem_build_email( $subject, $body, $unsub_url = '' ) {
+function dfem_build_email( $subject, $body, $unsub_url = '', $campaign_id = 0, $sub_token = '' ) {
     $settings      = get_option('dfem_settings',[]);
     $site_name     = get_bloginfo('name');
     $site_url      = home_url();
@@ -1561,6 +2155,9 @@ body{margin:0;padding:0;background:#f0f4f8;font-family:-apple-system,BlinkMacSys
     <p><?php echo esc_html($footer_txt); ?></p>
     <p><a href="<?php echo esc_url($site_url); ?>" style="color:rgba(255,255,255,.9);text-decoration:none;font-weight:700"><?php echo esc_html($site_name); ?></a></p>
     <?php echo $link_html; ?>
+    <?php if($campaign_id && $sub_token): ?>
+    <img src="<?php echo esc_url(add_query_arg(['dfem_track'=>'open','c'=>$campaign_id,'s'=>$sub_token], home_url('/'))); ?>" width="1" height="1" style="display:block;width:1px;height:1px;border:0" alt="">
+    <?php endif; ?>
     <div class="unsub"><a href="<?php echo esc_url($unsub_url); ?>">Unsubscribe from these emails</a></div>
   </div>
 </div>
